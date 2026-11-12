@@ -1,0 +1,32 @@
+[
+  {
+    "label": "支付服务：测试",
+    "command": "go",
+    "args": ["test", "./..."],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "save": "all",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false,
+    "reveal": "always"
+  },
+  {
+    "label": "支付服务：静态检查",
+    "command": "go",
+    "args": ["vet", "./..."],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "save": "all",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false,
+    "reveal": "always"
+  },
+  {
+    "label": "支付服务：编译检查",
+    "command": "go",
+    "args": ["build", "./..."],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "save": "all",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false,
+    "reveal": "always"
+  }
+]
