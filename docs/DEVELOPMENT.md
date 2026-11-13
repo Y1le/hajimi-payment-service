@@ -8,7 +8,7 @@
 - 先完成一条可靠收款链路，再扩展币种、商户及自动退款。
 - 设计、实现、代码审查和真实依赖验证按阶段推进；项目内提供 Zed 开发任务。
 
-当前的内存订单实现是开发适配器，并非生产持久化实现。以下数据库、网关、后台任务和入账契约均为待实现设计。
+PostgreSQL 连接池及订单 Create/Get 已实现，内存仓储保留用于单元测试。以下网关、后台任务和入账契约仍为待实现设计。订单持久化不等于真实支付链路完成。
 
 ## 业务与资金边界
 
@@ -112,11 +112,13 @@ CONSTRAINT payment_orders_merchant_order_unique
 ```go
 type OrderStore interface {
     Create(ctx context.Context, req order.CreateRequest) (order.Order, bool, error)
-    Get(ctx context.Context, merchantID string, id string) (order.Order, error)
+    Get(ctx context.Context, id string) (order.Order, error)
 }
 ```
 
-HTTP 层传 `r.Context()` 和认证得到的商户 ID。`CreateRequest` 增加内部使用的商户 ID，禁止从请求 JSON 绑定。查询 SQL 同时限定商户 ID 和支付订单 ID。`Order` 增加支付和履约状态、资产与网络、过期时间等与迁移匹配的字段。接口时间统一输出 UTC 的 RFC3339 格式。
+HTTP 层传 `r.Context()`。首版一个服务实例绑定一个商户 API 密钥，仓储在启动时绑定服务端配置 PAYMENT_MERCHANT_ID；不从请求 JSON 接收 merchant_id。查询 SQL 同时限定绑定的商户 ID 和支付订单 ID。通过为不同商户构造不同的仓储实例验证隔离；当前 HTTP 配置不支持同时接收多个商户密钥。
+
+本阶段保留现有 Order 请求/响应字段，SQL 把 payment_status 映射到原有 status 响应字段。资产、网络及过期时间由服务端写入，履约字段采用数据库初始状态；后续网关阶段再扩展响应，避免为持久化改造引入不必要的接口变化。时间统一输出 UTC 的 RFC3339 格式。
 
 新增 PostgreSQL 实现文件 `internal/order/postgres.go`。连接池在启动时创建、检查连通性并在退出时关闭；生产路径要求数据库配置有效，连接失败时不能自动退回内存存储。
 

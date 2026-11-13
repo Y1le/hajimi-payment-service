@@ -1,5 +1,15 @@
 [
   {
+    "label": "支付服务：PostgreSQL 集成测试",
+    "command": "powershell.exe",
+    "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$ZED_WORKTREE_ROOT/scripts/test-postgres.ps1"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "save": "all",
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false,
+    "reveal": "always"
+  },
+  {
     "label": "支付服务：测试",
     "command": "go",
     "args": ["test", "./..."],

@@ -1,0 +1,21 @@
+name: hajimi-payment-dev
+
+services:
+  postgres:
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: payment
+      POSTGRES_PASSWORD: ${PAYMENT_DB_ADMIN_PASSWORD:?Set PAYMENT_DB_ADMIN_PASSWORD before starting the development database}
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - payment_pg17:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d payment"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  payment_pg17:

@@ -1,6 +1,7 @@
 package order
 
 import (
+	"context"
 	"errors"
 	"math"
 	"sync"
@@ -52,7 +53,7 @@ func TestConcurrentCreateReplaysOneOrder(t *testing.T) {
 			if i%2 == 0 {
 				amount = "10"
 			}
-			created, replayed, err := store.Create(CreateRequest{
+			created, replayed, err := store.Create(context.Background(), CreateRequest{
 				MerchantOrderNo: "learn_10001", UserID: 42, Amount: amount, Currency: "USD",
 			})
 			results <- result{created, replayed, err}
@@ -86,7 +87,7 @@ func TestConflictingRetryDoesNotChangeOrder(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			store := NewMemoryStore()
 			req := CreateRequest{MerchantOrderNo: "learn_10001", UserID: 42, Amount: "10.00", Currency: "USD"}
-			original, _, err := store.Create(req)
+			original, _, err := store.Create(context.Background(), req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -95,10 +96,10 @@ func TestConflictingRetryDoesNotChangeOrder(t *testing.T) {
 			} else {
 				req.Amount = "20.00"
 			}
-			if _, _, err := store.Create(req); !errors.Is(err, ErrConflict) {
+			if _, _, err := store.Create(context.Background(), req); !errors.Is(err, ErrConflict) {
 				t.Fatalf("expected conflict, got %v", err)
 			}
-			got, err := store.Get(original.ID)
+			got, err := store.Get(context.Background(), original.ID)
 			if err != nil || got != original {
 				t.Fatalf("original order changed: %+v, %v", got, err)
 			}

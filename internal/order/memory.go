@@ -1,6 +1,7 @@
 package order
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -25,13 +26,19 @@ func NewMemoryStore() *MemoryStore {
 
 // Create returns an order and whether this call replayed an earlier request.
 // The lookup and insert share one lock so concurrent retries cannot duplicate it.
-func (s *MemoryStore) Create(req CreateRequest) (Order, bool, error) {
+func (s *MemoryStore) Create(ctx context.Context, req CreateRequest) (Order, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Order{}, false, err
+	}
 	cents, err := validate(req)
 	if err != nil {
 		return Order{}, false, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Order{}, false, err
+	}
 
 	if id, exists := s.byMerchantNo[req.MerchantOrderNo]; exists {
 		existing := s.byID[id]
@@ -66,7 +73,10 @@ func (s *MemoryStore) Create(req CreateRequest) (Order, bool, error) {
 	return created, false, nil
 }
 
-func (s *MemoryStore) Get(id string) (Order, error) {
+func (s *MemoryStore) Get(ctx context.Context, id string) (Order, error) {
+	if err := ctx.Err(); err != nil {
+		return Order{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	found, exists := s.byID[id]

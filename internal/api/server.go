@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -13,8 +14,8 @@ import (
 )
 
 type OrderStore interface {
-	Create(order.CreateRequest) (order.Order, bool, error)
-	Get(string) (order.Order, error)
+	Create(context.Context, order.CreateRequest) (order.Order, bool, error)
+	Get(context.Context, string) (order.Order, error)
 }
 
 // New builds the independent service's routes. A single API key represents one
@@ -69,9 +70,13 @@ func (s *server) createOrder(w http.ResponseWriter, r *http.Request) {
 		writeDecodeError(w, err)
 		return
 	}
-	created, replayed, err := s.store.Create(req)
+	created, replayed, err := s.store.Create(r.Context(), req)
 	if err != nil {
 		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			writeError(w, http.StatusGatewayTimeout, "DATABASE_TIMEOUT", "order operation timed out; retry with the same merchant_order_no")
+		case errors.Is(err, order.ErrUnavailable):
+			writeError(w, http.StatusServiceUnavailable, "DATABASE_UNAVAILABLE", "order storage is unavailable; retry with the same merchant_order_no")
 		case errors.Is(err, order.ErrInvalidInput):
 			writeError(w, http.StatusBadRequest, "INVALID_ORDER", err.Error())
 		case errors.Is(err, order.ErrConflict):
@@ -93,11 +98,16 @@ func (s *server) createOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) getOrder(w http.ResponseWriter, r *http.Request) {
-	found, err := s.store.Get(r.PathValue("id"))
+	found, err := s.store.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		if errors.Is(err, order.ErrNotFound) {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			writeError(w, http.StatusGatewayTimeout, "DATABASE_TIMEOUT", "order lookup timed out")
+		case errors.Is(err, order.ErrUnavailable):
+			writeError(w, http.StatusServiceUnavailable, "DATABASE_UNAVAILABLE", "order storage is unavailable")
+		case errors.Is(err, order.ErrNotFound):
 			writeError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "order not found")
-		} else {
+		default:
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not get order")
 		}
 		return

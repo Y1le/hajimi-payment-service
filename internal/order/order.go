@@ -13,6 +13,7 @@ var (
 	ErrInvalidInput = errors.New("invalid order input")
 	ErrConflict     = errors.New("merchant order number already has different parameters")
 	ErrNotFound     = errors.New("order not found")
+	ErrUnavailable  = errors.New("database unavailable")
 	amountPattern   = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$`)
 	orderNoPattern  = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 )

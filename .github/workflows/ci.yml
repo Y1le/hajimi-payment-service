@@ -45,3 +45,38 @@ jobs:
           GOARCH: arm64
           CGO_ENABLED: '0'
         run: go build -o build/hajimi-payment-service-linux-arm64 ./cmd/server
+
+  postgres:
+    name: PostgreSQL integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17.11-bookworm
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_DB: payment_test
+          # Disposable CI database only; this is not a deployment credential.
+          POSTGRES_PASSWORD: payment_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d payment_test"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      PAYMENT_TEST_DATABASE_URL: postgres://postgres@127.0.0.1:5432/payment_test?sslmode=disable
+      PGPASSWORD: payment_ci_only
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.x'
+          cache: false
+      - name: Apply initial migration
+        run: psql "$PAYMENT_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/000001_payment_orders.up.sql
+      - name: Test against PostgreSQL with race detector
+        run: go test -race -tags=integration -count=1 ./...

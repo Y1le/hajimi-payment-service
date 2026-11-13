@@ -6,7 +6,9 @@
 
 目标是为 sub2api 提供独立的 USDT / TRON（TRC20）收款、付款核验及充值通知服务。技术栈采用 Go、PostgreSQL（pgx）和 SHKeeper。
 
-**当前工程状态：** 已实现开发用订单创建、查询及进程内幂等。存储仍为内存，重启后数据丢失；PostgreSQL、SHKeeper、付款核验和 sub2api 入账通知尚未实现。当前版本不具备实际收款能力。
+**当前工程状态：** 已实现 PostgreSQL 订单创建、查询和数据库唯一约束防重，支持应用进程重启后查询与重试恢复原订单。SHKeeper、付款核验和 sub2api 入账通知尚未实现。当前版本不具备实际收款能力。
+
+本阶段保留现有订单请求和响应字段。表中的资产、网络、过期时间和履约状态按服务端规则保存，后续网关阶段再扩展对外响应。
 
 开发按 [工程设计与第一阶段任务](docs/DEVELOPMENT.md) 推进，每个阶段用明确的验收结果确认完成。
 
@@ -20,6 +22,8 @@ zed hajimi-payment-service
 ```
 
 项目内已配置 `.zed/tasks.json`。从命令面板执行 `task: spawn`，选择“支付服务：测试”“支付服务：静态检查”或“支付服务：编译检查”。任务配置与用法参考 [Zed 官方文档](https://zed.dev/docs/tasks)。
+
+“支付服务：PostgreSQL 集成测试”会创建随机命名的独立测试数据库，应用表结构、执行真实数据库测试并在结束后清理测试库。它不会清空业务数据库；如当前终端没有数据库管理密码，会提示输入。
 
 ## 最终业务边界
 
@@ -37,14 +41,44 @@ zed hajimi-payment-service
 
 ## 启动当前开发进程
 
-要求 Go 1.22 或更新版本，当前无第三方依赖。在仓库根目录的 PowerShell 中运行：
+要求 Go 1.25 或更新版本，使用固定版本 pgx v5.11.0。
+
+首次在本地开发数据库创建应用专用账号，数据库管理操作使用已有的 postgres 账号：
 
 ```powershell
-$env:PAYMENT_API_KEY = Read-Host '设置一个至少 32 字符的本地测试密钥'
+docker exec -it hajimi-payment-dev-postgres-1 psql -U postgres -d payment
+```
+
+进入 psql 后逐条执行。`\password` 会交互设置密码，不把明文密码写进 SQL 文件：
+
+```sql
+CREATE ROLE payment_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+\password payment_app
+GRANT CONNECT ON DATABASE payment TO payment_app;
+GRANT USAGE ON SCHEMA public TO payment_app;
+GRANT SELECT, INSERT ON TABLE public.payment_orders TO payment_app;
+\q
+```
+
+账号已存在时不重复执行 CREATE ROLE；可检查现有账号权限后继续。应用账号不承担数据库迁移，不授予 DELETE 或建表权限。本阶段 Create/Get 只需要 SELECT 和 INSERT。
+
+在仓库根目录的 PowerShell 中运行：
+
+```powershell
+function Read-LocalSecret([string]$PromptText) {
+    $secret = Read-Host $PromptText -AsSecureString
+    [System.Management.Automation.PSCredential]::new('local', $secret).GetNetworkCredential().Password
+}
+$env:DATABASE_URL = 'postgres://payment_app@127.0.0.1:55432/payment?sslmode=disable'
+$env:PGPASSWORD = Read-LocalSecret '输入 payment_app 密码'
+$env:PAYMENT_MERCHANT_ID = 'hajimi'
+$env:PAYMENT_API_KEY = Read-LocalSecret '设置至少 32 字符的本地测试 API 密钥'
 go run ./cmd/server
 ```
 
 默认监听 `127.0.0.1:5210`。可通过环境变量 `PAYMENT_ADDR` 指定其他监听地址。按 Ctrl+C 停止。
+
+PGPASSWORD 是 pgx 支持的连接环境变量，密码没有放进 DATABASE_URL。这里的 sslmode=disable 仅用于本机 Docker 开发连接。进程在数据库连接或表检查失败时退出，不自动退回内存存储。
 
 ## 手动验证
 
@@ -114,25 +148,29 @@ Invoke-RestMethod `
 ```text
 cmd/server/main.go          读取配置、启动 HTTP 服务、退出时等待请求结束
 internal/api/server.go     注册路由、验证商户密钥、解析请求、返回结果
+internal/database/postgres.go 创建并验证进程级 pgx 连接池
 internal/order/order.go    订单字段、金额校验、整数分转换
-internal/order/memory.go   保存与查询订单、拦截并发重复创建
+internal/order/postgres.go 商户范围内的持久化创建、查询和幂等恢复
+internal/order/memory.go   单元测试使用的内存适配器
 ```
 
 HTTP 路由使用 Go 标准库 `net/http`，参考 [ServeMux 官方文档](https://pkg.go.dev/net/http#ServeMux)。
 
 ## 当前订单实现
 
-沿 `POST /api/v1/orders → createOrder → MemoryStore.Create` 读一遍代码，重点理解：
+沿 `POST /api/v1/orders → createOrder → PostgresStore.Create` 读一遍代码，重点理解：
 
 1. 为什么金额是字符串输入，却是整数分保存？
-2. 为什么先查业务订单号、再保存订单这两步必须在同一把锁内？
+2. 为什么数据库创建要使用唯一约束和 INSERT ... ON CONFLICT，而不依赖进程内的锁？
 3. 为什么重复请求修改了用户或金额时，必须报错？
 
-下一阶段实现 PostgreSQL 存储：让订单和幂等记录在重启后仍然存在。数据库里需要给商户业务订单号设置唯一约束；进程内的锁不能替代数据库约束。具体字段、接口调整和验收条件见开发文档。
+首版一个服务实例对应一个商户 API 密钥；PostgresStore 在启动时绑定 PAYMENT_MERCHANT_ID，客户端请求不接受 merchant_id。创建和查询 SQL 都带绑定的商户范围。当前请求固定 USD 标价、USDT / TRON 目标资产。
+
+幂等重复请求返回原订单，包括其当前状态。重试不会刷新过期时间、更新时间或版本号，不会重开已经过期的订单。
 
 ## 后续开发顺序
 
-1. PostgreSQL 持久化与并发创建测试。
+1. 持续维护 PostgreSQL 持久化、商户隔离与并发创建集成测试。
 2. 接入 USDT / TRON（TRC20），保存 SHKeeper 收款信息，实现创建与查询发票；处理调用超时后结果不确定的情况。
 3. 回调原文验签、主动核验付款、订单状态迁移。
 4. 独立记录“已付款”和“已入账”，通过可靠任务及接收端幂等接口给 sub2api 入账。
@@ -148,6 +186,14 @@ go vet ./...
 ```
 
 测试覆盖金额精度及溢出、64 个并发重复请求、重试参数冲突、接口认证、伪造付款字段和错误请求。
+
+真实 PostgreSQL 验证请在 PowerShell 执行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-postgres.ps1
+```
+
+脚本使用数据库管理账号创建和清理临时测试库，业务进程使用前述 payment_app 账号。集成测试覆盖两个独立连接池的并发防重、用户/金额冲突、商户隔离、过期订单重试、重建连接池后的数据保留，以及存储不可用时 HTTP 503。普通 go test ./... 不连接数据库。
 
 GitHub Actions 配置了 Windows / Linux 测试、静态检查、编译、Linux 并发竞争检测和 Linux ARM64 交叉编译。这些检查覆盖当前代码，不代表实际支付链路验收。
 

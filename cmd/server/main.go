@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Y1le/hajimi-payment-service/internal/api"
+	"github.com/Y1le/hajimi-payment-service/internal/database"
 	"github.com/Y1le/hajimi-payment-service/internal/order"
 )
 
@@ -23,7 +24,21 @@ func main() {
 }
 
 func run() error {
-	handler, err := api.New(order.NewMemoryStore(), os.Getenv("PAYMENT_API_KEY"))
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer startupCancel()
+	pool, err := database.Open(startupCtx, os.Getenv("DATABASE_URL"))
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	store, err := order.NewPostgresStore(pool, os.Getenv("PAYMENT_MERCHANT_ID"))
+	if err != nil {
+		return err
+	}
+	if err := store.Check(startupCtx); err != nil {
+		return err
+	}
+	handler, err := api.New(store, os.Getenv("PAYMENT_API_KEY"))
 	if err != nil {
 		return err
 	}
@@ -44,7 +59,7 @@ func run() error {
 	defer stop()
 	serveErrors := make(chan error, 1)
 	go func() {
-		slog.Info("payment service listening", "address", addr, "storage", "memory", "gateway_connected", false)
+		slog.Info("payment service listening", "address", addr, "storage", "postgres", "gateway_connected", false)
 		serveErrors <- srv.ListenAndServe()
 	}()
 	select {
